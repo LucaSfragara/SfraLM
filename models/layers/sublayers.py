@@ -1,19 +1,16 @@
-
-from asyncio.graph import capture_call_graph
 import torch.nn as nn
 import torch.nn.functional as F
 import torch 
 from typing import Tuple, Optional
-from .rope import RotaryEmbedding
-
-from torch.nn import Transformer
+from .rope import RotaryEmbedding, apply_rope
+from timm.layers.norm import RmsNorm
 
 class SelfAttentionLayer(nn.Module):
     '''
     Pre-LN Decoder Sub-Layer 1.
     This layer is responsible for the causally-masked self-attention mechanism.
     ''' 
-    def __init__(self, d_model: int, num_heads: int, dropout: float = 0.0):
+    def __init__(self, d_model: int, num_heads: int, dropout: float = 0.0, use_rope: bool = True):
         '''
         Initialize the SelfAttentionLayer. 
         Args:
@@ -26,7 +23,11 @@ class SelfAttentionLayer(nn.Module):
         self.num_heads = num_heads
         self.d_model = d_model
         self.head_dim = d_model // num_heads
-        
+        self.use_rope = use_rope
+
+        if self.use_rope:
+            self.rope = RotaryEmbedding(self.head_dim, 2048) # Initialize rotary embedding
+
         assert d_model % num_heads == 0
 
         self.W_qkv = nn.Linear(d_model, 3 * d_model, bias = True)  # Combined projection for Q, K, V
@@ -53,7 +54,7 @@ class SelfAttentionLayer(nn.Module):
         # 1) Pre-norm + residual
         residual = x
         x = self.norm(x)
-
+        
         qkv_proj = self.W_qkv(x) # (B,T,3*D)
         q, k, v = qkv_proj.chunk(3, dim=-1) # Each is (B,T,D)
         
@@ -61,12 +62,16 @@ class SelfAttentionLayer(nn.Module):
         k = self._split_heads(k) # (B,H,T,hD)
         v = self._split_heads(v) # (B,H,T,hD)
 
+        if self.use_rope:
+            cos, sin = self.rope.get_cos_sin(seq_len=T, device=x.device, dtype=x.dtype)
+            q, k = apply_rope(q, k, cos, sin)
+
         attn_output,attn_weights = F.scaled_dot_product_attention(q, 
                                                                   k,
                                                                   v, 
                                                                   attn_mask = None, 
                                                                   dropout_p=self.dropout.p if self.training else 0,
-                                                                  is_causal=True) # attn_output: (B,H,T,hD), attn_weights: (B,H,T,T)
+                                                                  is_causal=True), None # attn_output: (B,H,T,hD), attn_weights: (B,H,T,T) but for now is None
         attn_output = self._merge_heads(attn_output) # (B,T,D)
         attn_output = self.out_proj(attn_output) # (B,T,D)
         attn_output = self.dropout(attn_output)
@@ -85,30 +90,6 @@ class SelfAttentionLayer(nn.Module):
         D = H * hD
         return x.transpose(1,2).reshape(B, T, D)
 
-
-def apply_rotary(x, cos, sin):
-    """Apply rotary position embeddings to input tensors."""
-    # Split the last dimension in half
-    x1, x2 = x.chunk(2, dim=-1)  # Each half becomes head_dim/2
-    
-    # Make sure cos, sin have the right shape
-    # They should be (seq_len, head_dim/2) not (seq_len, head_dim)
-    if cos.size(-1) == x.size(-1):  # If cos has full head_dim
-        cos = cos[..., :x1.size(-1)]  # Take only first half
-        sin = sin[..., :x1.size(-1)]  # Take only first half
-    
-    # Reshape cos/sin for broadcasting
-    cos = cos.unsqueeze(0).unsqueeze(0)  # 1, 1, seq_len, head_dim/2
-    sin = sin.unsqueeze(0).unsqueeze(0)  # 1, 1, seq_len, head_dim/2
-    
-    # Apply RoPE via complex-number multiplication
-    result = torch.cat([
-        x1 * cos - x2 * sin,  # real component
-        x2 * cos + x1 * sin   # imaginary component
-    ], dim=-1)
-    
-    return result.type_as(x)
-
 ## -------------------------------------------------------------------------------------------------  
 class FeedForwardLayer(nn.Module):
     '''
@@ -124,21 +105,16 @@ class FeedForwardLayer(nn.Module):
             dropout (float): The dropout rate.
         '''
         super().__init__()
-        # TODO: Implement __init__
-
-        # TODO: Initialize the feed-forward network (use nn.Sequential)
-        # See writeup for what layers to use
+     
         self.ffn = nn.Sequential(
             nn.Linear(d_model, d_ff), 
-            nn.GELU(), 
+            nn.GELU(),  # TODO: try SWIGLU
             nn.Dropout(dropout),
             nn.Linear(d_ff, d_model)
         )
-        
-        # TODO: Initialize the normalization layer
-        self.norm = nn.LayerNorm(d_model)
-        
-        # TODO: Initialize the dropout layer
+
+        self.norm = RmsNorm(d_model)
+
         self.dropout = nn.Dropout(dropout)
        
 
@@ -146,8 +122,7 @@ class FeedForwardLayer(nn.Module):
         '''
         Forward pass for the FeedForwardLayer.
         Args:
-            x (torch.Tensor): The input tensor. shape: (batch_size, seq_len, d_model)   
-
+            x (torch.Tensor): The input tensor. shape: (batch_size, seq_len, d_model)  
         Returns:
             x (torch.Tensor): The output tensor. shape: (batch_size, seq_len, d_model)
         ''' 

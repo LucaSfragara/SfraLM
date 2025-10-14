@@ -35,10 +35,8 @@ class SelfAttentionDecoderLayer(nn.Module):
             x (torch.Tensor): The output tensor. shape: (batch_size, seq_len, num_classes)
             mha_attn_weights (torch.Tensor): The attention weights. shape: (batch_size, seq_len, seq_len)   
         '''
-        # TODO: Implement forward: Follow the figure in the writeup
         
         x, mha_attn_weights = self.self_attn.forward(x)
         x = self.ffn(x)
         
-        # TODO: Return the output tensor and attention weights
         return x, mha_attn_weights
