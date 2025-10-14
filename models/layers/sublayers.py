@@ -45,8 +45,8 @@ class SelfAttentionLayer(nn.Module):
     def forward(self,
                 x: torch.Tensor,                     # [B, T, D]
                 attn_mask: Optional[torch.Tensor] = None,      # optional [T, T] or [B*T, T]
-                key_padding_mask: Optional[torch.Tensor] = None # optional [B, T]
-               ):
+                key_padding_mask: Optional[torch.Tensor] = None, # optional [B, T]
+                pos_ids: Optional[torch.Tensor] = None ): # optional [B, T]
         
         B, T, D = x.size()
         H, hD   = self.num_heads, self.head_dim
@@ -64,7 +64,7 @@ class SelfAttentionLayer(nn.Module):
 
         if self.use_rope:
             cos, sin = self.rope.get_cos_sin(seq_len=T, device=x.device, dtype=x.dtype)
-            q, k = apply_rope(q, k, cos, sin)
+            q, k = apply_rope(q, k, cos, sin, pos_ids=pos_ids)
 
         attn_output,attn_weights = F.scaled_dot_product_attention(q, 
                                                                   k,

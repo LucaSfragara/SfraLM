@@ -4,7 +4,7 @@ import random
 from typing import Tuple, Optional
 #from models.masks import PadMask, CausalMask
 from models.layers.decoder_layers import SelfAttentionDecoderLayer
-
+from models.layers.embedding import TokenEmbedding
 
 class DecoderOnlyTransformer(nn.Module):
     '''
@@ -38,10 +38,8 @@ class DecoderOnlyTransformer(nn.Module):
         '''
         super().__init__()
         
-        # TODO: Implement __init__
-
+       
         # Initialize the decoder
-        # DO NOT MODIFY THESE ATTRIBUTES
         self.seq_len         = seq_len
         self.layer_drop_rate = layer_drop_rate
         self.num_classes     = num_classes
@@ -52,17 +50,23 @@ class DecoderOnlyTransformer(nn.Module):
             [(SelfAttentionDecoderLayer(d_model, num_heads, d_ff, dropout)) for _ in range(num_layers)]
         ) # ModuleList of decoder layers
 
-        # TODO: Create target embedding and other layers
-        self.target_embedding       = nn.Embedding(num_classes, d_model)
-        
-        #self.positional_encoding    = PositionalEncoding(d_model, seq_len) # Positional encoding
+        self.target_embedding       = TokenEmbedding(num_classes, d_model)
+
         self.final_linear           = nn.Linear(d_model, num_classes) # Final linear layer
+
+        nn.init.normal_(self.final_linear.weight, mean=0.0, std=0.02) # Initialize final linear layer
+
         self.dropout                = nn.Dropout(dropout) # Dropout
         self.norm                   = nn.LayerNorm(d_model) # Layer norm
 
         # Weight tying (extra form of regularization, read more about it)
         if weight_tying:
-            self.target_embedding.weight = self.final_linear.weight
+            self.target_embedding.embed.weight = self.final_linear.weight
+
+    @torch.no_grad()
+    def _make_pos_ids(self, B: int, T: int, device) -> torch.Tensor:
+        # positions 0..T-1 for every sequence (change here for packed/chunked)
+        return torch.arange(T, device=device).unsqueeze(0).expand(B, T)
 
 
     def forward(self, padded_targets: torch.Tensor) -> Tuple[torch.Tensor, dict]:
@@ -77,31 +81,23 @@ class DecoderOnlyTransformer(nn.Module):
         '''
     
         x = self.target_embedding(padded_targets)
-
-        #x = self.positional_encoding(x)
-  
-  
+    
         x = self.dropout(x)
 
-        # TODO: Pass through all decoder layers, save attention masks
         runnint_att = {}
         for i in range(self.num_layers):
             # Optionally apply LayerDrop during training (More regularization!)
             if self.training and self.layer_drop_rate > 0 and random.random() < self.layer_drop_rate:
                 continue
             
-            # TODO: Pass through decoder layer
-            x, attention = self.dec_layers[i](x)
+            x, attention = self.dec_layers[i](x, pos_ids = self._make_pos_ids(x.size(0), x.size(1), x.device)) # shape (batch_size, seq_len, d_model), (batch_size, seq_len, seq_len)
             
-            # TODO: Save attention weights  
             runnint_att['layer{}_dec_self'.format(i + 1)] = attention #shape (batch_size, seq_len, seq_len) 
 
-        # TODO: Apply normalization
         x = self.norm(x)
-        # TODO: Linear layer (Final Projection) for next character prediction
+  
         seq_out = self.final_linear(x)
-        
-        # TODO: Return the output sequence and running attention weights
+  
         return seq_out, runnint_att
     
     def score(self, batch_prompts: torch.Tensor) -> torch.Tensor:
@@ -123,26 +119,3 @@ class DecoderOnlyTransformer(nn.Module):
         logits     = seq_out[:, -1, :]
         return logits
     
-
-#test score function with dummy model
-if __name__ == "__main__":
-    # Dummy model
-    model = DecoderOnlyTransformer(
-        num_layers=6,
-        d_model=512,
-        num_heads=8,
-        d_ff=2048,
-        dropout=0.1,
-        seq_len=512,
-        num_classes=5,
-        weight_tying=False,
-        layer_drop_rate=0.1
-    )
-    
-    # Dummy input
-    batch_prompts = torch.randint(0,4, (1, 12))
-    print(batch_prompts.shape)  # Should be (1, 128)
-    model.eval()  # Set model to evaluation mode
-    # Test score function
-    logits = model.score(batch_prompts)
-    print(logits.shape)  # Should be (1, 100)
