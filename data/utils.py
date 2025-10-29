@@ -1,10 +1,11 @@
 import pyarrow.parquet as pq
-
+import os
 
 def read_parquet_examples():
     """ Example code snippets for reading parquet files using pyarrow. """
     # Read entire file (only "text" column)
-    table = pq.read_table("./data/base_data/shard_00114.parquet", columns=["text"])
+    print(os.listdir("."))
+    table = pq.read_table("datasets/base_data/shard_00114.parquet", columns=["text"])
     texts = table["text"].to_pylist()
     print(texts)
     

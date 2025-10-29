@@ -1,0 +1,22 @@
+{
+    "prefix": "sfraLM",
+    "data": {
+        "download_dir": "./datasets"
+    },
+
+    "tokenizer": {
+        "out_dir": "./tokenizer",
+        "model_type": "unigram",
+        "vocab_size": 2450,
+        "character_coverage": 1.0,
+        "byte_fallback": true,
+        "bos_id": 1,
+        "eos_id": 2,
+        "pad_id": -1,
+        "unk_id": 0,
+        "user_defined_symbols": null,
+        "input_sentence_size": null,
+        "shuffle_input_sentence": true,
+        "seed_sentencepiece_size": null
+    }
+}
