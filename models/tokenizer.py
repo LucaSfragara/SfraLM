@@ -7,6 +7,7 @@ import json
 
 @dataclass
 class TokConfig:
+    
     model_type: str = "unigram"   # or "bpe"
     vocab_size: int = 24576
     character_coverage: float = 1.0
@@ -34,46 +35,7 @@ class SfraTokenizer:
         self.eos_id = self.sp.eos_id()
         self.pad_id = self.sp.pad_id()
         self.unk_id = self.sp.unk_id()
-
-    # ---- factory to train + return a ready-to-use tokenizer ----
-    @classmethod
-    def train(cls, input_files, out_dir: str, prefix: str = "sfrallm", cfg: TokConfig = TokConfig(),
-              add_bos=True, add_eos=True, device="cpu"):
-        out = Path(out_dir); out.mkdir(parents=True, exist_ok=True)
         
-        model_path = out / f"{prefix}.model"
-        vocab_path  = out / f"{prefix}.vocab"
-        cfg_path    = out / f"{prefix}.json"
-
-        if isinstance(input_files, (list, tuple)):
-            input_spec = ",".join(map(str, input_files))
-        else:
-            input_spec = str(input_files)
-
-        args = {
-            "input": input_spec,
-            "model_prefix": str(out / prefix),
-            "model_type": cfg.model_type,
-            "vocab_size": cfg.vocab_size,
-            "character_coverage": cfg.character_coverage,
-            "byte_fallback": cfg.byte_fallback,
-            "bos_id": cfg.bos_id,
-            "eos_id": cfg.eos_id,
-            "pad_id": cfg.pad_id,
-            "unk_id": cfg.unk_id,
-        }
-        if cfg.user_defined_symbols:
-            args["user_defined_symbols"] = ",".join(cfg.user_defined_symbols)
-        if cfg.input_sentence_size:
-            args["input_sentence_size"] = cfg.input_sentence_size
-            args["shuffle_input_sentence"] = cfg.shuffle_input_sentence
-
-        spm.SentencePieceTrainer.train(**args)
-
-        # save a tiny sidecar config for reproducibility
-        (out / cfg_path.name).write_text(json.dumps(asdict(cfg), indent=2))
-        return cls(str(model_path), add_bos=add_bos, add_eos=add_eos, device=device)
-
     # ---- runtime methods (encode/decode) ----
     def encode(self, text: str, return_tensors: bool = True):
         ids = self.sp.encode(text, out_type=int)
@@ -86,7 +48,7 @@ class SfraTokenizer:
             ids = ids.tolist()
         return self.sp.decode(ids)
 
-    def encode_batch(self, texts: List[str], max_length: Optiona[int] = None, pad_to_max: bool = False) -> torch.LongTensor:
+    def encode_batch(self, texts: List[str], max_length: Optional[int] = None, pad_to_max: bool = False) -> torch.LongTensor:
         batch = [self.encode(t, return_tensors=False) for t in texts]
         max_length = max_length or max(len(x) for x in batch)
         pad_id = self.pad_id if self.pad_id >= 0 else 0
